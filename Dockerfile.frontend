@@ -1,0 +1,87 @@
+# Multi-stage build for frontend
+# Use regular node image (not alpine) for better cross-platform compatibility
+FROM node:18-slim AS builder
+
+WORKDIR /app
+
+# Install build dependencies for better compatibility across architectures
+RUN apt-get update && apt-get install -y \
+    python3 \
+    make \
+    g++ \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy package files from frontend directory
+COPY frontend/package*.json ./
+# Remove pnpm-lock.yaml if it exists to prevent Next.js from trying to use pnpm
+RUN rm -f pnpm-lock.yaml 2>/dev/null || true
+
+# Install dependencies with force flag to handle peer dependency conflicts
+RUN npm install --force || npm install --legacy-peer-deps
+
+# Copy source code from frontend directory
+COPY frontend/ .
+
+# Set environment variables for API communication
+# NEXT_PUBLIC_* vars are embedded at build time for static exports
+# Use localhost:8000 because the browser (client-side) needs to access backend via host port
+# The backend is exposed on localhost:8000 from the host machine
+ENV NEXT_PUBLIC_API_BASE_URL=http://localhost:8000/api
+ENV NEXT_TELEMETRY_DISABLED=1
+
+# Detect architecture and install appropriate SWC package
+# This ensures compatibility with both ARM64 (Mac) and x86_64 (Linux servers)
+RUN ARCH=$(uname -m) && \
+    if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then \
+    echo "Detected ARM64 architecture, installing ARM64 SWC..." && \
+    (npm install --save-optional @next/swc-linux-arm64-gnu 2>/dev/null || \
+    npm install --save-optional @next/swc-linux-arm64-musl 2>/dev/null || true); \
+    elif [ "$ARCH" = "x86_64" ] || [ "$ARCH" = "amd64" ]; then \
+    echo "Detected x86_64 architecture, installing x86_64 SWC..." && \
+    (npm install --save-optional @next/swc-linux-x64-gnu 2>/dev/null || \
+    npm install --save-optional @next/swc-linux-x64-musl 2>/dev/null || true); \
+    else \
+    echo "Unknown architecture $ARCH, skipping SWC installation (will use Babel fallback)"; \
+    fi || true
+
+# Build production version
+# Next.js will automatically use SWC if available, otherwise fallback to Babel
+RUN npm run build
+
+# Production stage - use serve for static files
+# Use slim image for smaller size, still works on both ARM and x86_64
+FROM node:18-slim
+
+WORKDIR /app
+
+# Install serve globally
+RUN npm install -g serve
+
+# Copy built files from builder
+# Next.js with output: 'export' creates 'out' directory
+RUN --mount=from=builder,source=/app,target=/source \
+    mkdir -p /app && \
+    if [ -d /source/out ]; then cp -r /source/out /app/out; fi && \
+    if [ -d /source/build ]; then cp -r /source/build /app/build; fi && \
+    if [ -d /source/dist ]; then cp -r /source/dist /app/dist; fi
+
+# Create startup script
+RUN echo '#!/bin/sh' > /start.sh && \
+    echo 'if [ -d "out" ]; then' >> /start.sh && \
+    echo '  serve -s out -l 3000' >> /start.sh && \
+    echo 'elif [ -d "build" ]; then' >> /start.sh && \
+    echo '  serve -s build -l 3000' >> /start.sh && \
+    echo 'elif [ -d "dist" ]; then' >> /start.sh && \
+    echo '  serve -s dist -l 3000' >> /start.sh && \
+    echo 'else' >> /start.sh && \
+    echo '  echo "Error: No build output found"' >> /start.sh && \
+    echo '  exit 1' >> /start.sh && \
+    echo 'fi' >> /start.sh && \
+    chmod +x /start.sh
+
+# Expose port
+EXPOSE 3000
+
+# Start production server
+CMD ["/start.sh"]
+

@@ -1,0 +1,43 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install git, curl, ca-certificates, and gpg (for Docker installation)
+RUN apt-get update && apt-get install -y \
+    git \
+    curl \
+    ca-certificates \
+    gnupg \
+    lsb-release \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Docker CLI (needed to interact with Docker socket)
+RUN ARCH=$(dpkg --print-architecture) && \
+    DISTRO=$(lsb_release -cs 2>/dev/null || echo "bullseye") && \
+    curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg && \
+    echo "deb [arch=${ARCH} signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/debian ${DISTRO} stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null && \
+    apt-get update && \
+    apt-get install -y docker-ce-cli && \
+    rm -rf /var/lib/apt/lists/* || \
+    echo "Docker CLI installation skipped - will use docker from host via socket"
+
+# Docker Compose v2 is included with Docker CLI as "docker compose" plugin
+# Also try to install standalone docker-compose v1 as fallback
+RUN curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-$(uname -m)" -o /usr/local/bin/docker-compose && \
+    chmod +x /usr/local/bin/docker-compose || \
+    echo "docker-compose v1 installation skipped (will use docker compose plugin)"
+
+# Copy requirements and install Python dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy agent scripts
+COPY deploy_agent.py .
+COPY deploy_watcher.py .
+
+# Make scripts executable
+RUN chmod +x deploy_agent.py deploy_watcher.py
+
+# Default command - run watcher for auto-deploy
+CMD ["python", "deploy_watcher.py"]
+

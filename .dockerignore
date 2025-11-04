@@ -1,0 +1,25 @@
+# Environment variables
+.env.local
+
+# Directories
+# frontend/ and backend/ are needed for Docker builds, don't ignore them
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Docker
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+

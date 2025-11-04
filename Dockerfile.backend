@@ -1,0 +1,47 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    gcc \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements first for better caching (from backend directory)
+COPY backend/requirements.txt .
+
+# Create virtual environment and install dependencies
+RUN python -m venv venv && \
+    venv/bin/pip install --upgrade pip && \
+    venv/bin/pip install -r requirements.txt
+
+# Copy application code from backend directory
+COPY backend/ .
+
+# Use venv python for running the app
+ENV PATH="/app/venv/bin:$PATH"
+
+# Create startup script to try common entry points
+RUN echo '#!/bin/bash' > /start.sh && \
+    echo 'export PORT=${PORT:-8000}' >> /start.sh && \
+    echo 'export HOST=${HOST:-0.0.0.0}' >> /start.sh && \
+    echo 'if [ -f "app.py" ]; then' >> /start.sh && \
+    echo '  exec python app.py' >> /start.sh && \
+    echo 'elif [ -f "main.py" ]; then' >> /start.sh && \
+    echo '  exec python main.py' >> /start.sh && \
+    echo 'elif [ -f "run.py" ]; then' >> /start.sh && \
+    echo '  exec python run.py' >> /start.sh && \
+    echo 'elif [ -f "manage.py" ]; then' >> /start.sh && \
+    echo '  exec python manage.py runserver $HOST:$PORT' >> /start.sh && \
+    echo 'else' >> /start.sh && \
+    echo '  echo "Error: No entry point found. Please specify CMD in docker-compose.yml"' >> /start.sh && \
+    echo '  exit 1' >> /start.sh && \
+    echo 'fi' >> /start.sh && \
+    chmod +x /start.sh
+
+# Expose port
+EXPOSE 8000
+
+# Default command
+CMD ["/start.sh"]
+

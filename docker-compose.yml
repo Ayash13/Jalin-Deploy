@@ -1,0 +1,82 @@
+services:
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: jalin-frontend
+    ports:
+      - "3000:3000"
+    networks:
+      - jalin-network
+    restart: unless-stopped
+    depends_on:
+      - backend
+    environment:
+      # API URL for browser (client-side) requests
+      # Browser needs to use localhost:8000 to reach the backend (exposed on host port 8000)
+      # This is set at build time for Next.js static export
+      - NEXT_PUBLIC_API_BASE_URL=http://localhost:8000/api
+    env_file:
+      - ./frontend/.env.local
+    # Volumes are commented out - .env.local is copied into image during build
+    # volumes:
+    #   - ./frontend/.env.local:/app/.env.local:ro
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: jalin-backend
+    ports:
+      - "8000:8000"
+    networks:
+      - jalin-network
+    restart: unless-stopped
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PORT=8000
+    env_file:
+      - ./backend/.env.local
+    volumes:
+      - backend-venv:/app/venv
+    # Volume mount commented out - .env.local is copied into image during build
+    #   - ./backend/.env.local:/app/.env.local:ro
+    # Don't mount code directory - use image for faster, more reliable deploys
+
+  agent:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    container_name: jalin-agent
+    networks:
+      - jalin-network
+    restart: unless-stopped
+    environment:
+      - FE_REPO_URL=https://github.com/Ayash13/Jalin-App-v2.git
+      - BE_REPO_URL=https://github.com/Ayash13/JalinApp-REN.git
+      - POLL_INTERVAL=300
+    volumes:
+      # Mount the entire project directory so docker-compose can access all files
+      # This is needed because docker-compose resolves paths on the host filesystem
+      - .:/app/project:rw
+      # Also mount individual files for backward compatibility
+      - ./.env.local:/app/.env.local:ro
+      - ./frontend:/app/frontend
+      - ./backend:/app/backend
+      - ./deploy_agent.py:/app/deploy_agent.py:ro
+      - ./deploy_watcher.py:/app/deploy_watcher.py:ro
+      - ./docker-compose.yml:/app/docker-compose.yml:ro
+      # Mount Docker socket so agent can run docker-compose commands
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # Mount docker-compose binary if available, or use docker compose plugin
+      - /usr/local/bin:/host-bin:ro
+    command: python deploy_watcher.py
+
+networks:
+  jalin-network:
+    driver: bridge
+
+volumes:
+  backend-venv:
+    driver: local
+
